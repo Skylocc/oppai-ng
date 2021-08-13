@@ -262,7 +262,7 @@ float getspeed(void* data, int i) {
 output_sig(output_text) {
   float ar, od, cs, hp, stars, aim_stars, speed_stars, accuracy_percent;
   float pp, aim_pp, speed_pp, acc_pp;
-
+  
   if (result < 0) {
     puts(errstr(result));
     return;
@@ -298,7 +298,16 @@ output_sig(output_text) {
     printf("CS%g ", cs);
   }
 
+  if (ezpp_mode(ez) == MODE_MANIA) {
+    printf("KEYS %g ", cs);
+      printf("Score %d\n\n", ezpp_score(ez));
+  }
+
+  printf("%g stars\n\n", ezpp_stars(ez));
+
+
   printf("HP%g\n", hp);
+
   printf("300 hitwindow: %g ms\n", ezpp_odms(ez));
 
   printf("%d circles, %d sliders, %d spinners\n",
@@ -312,6 +321,7 @@ output_sig(output_text) {
     asciiplt(getaim, ezpp_nobjects(ez), ez);
   } else {
     printf("%g stars\n", ezpp_stars(ez));
+    
   }
 
   printf("\n");
@@ -904,6 +914,18 @@ int main(int argc, char* argv[]) {
 
     if (!strcmp(a, "-taiko")) {
       ezpp_set_mode_override(ez, MODE_TAIKO);
+      continue;
+    }
+
+     if (!strcmp(a, "-mania")) {
+      ezpp_set_mode_override(ez, MODE_MANIA);
+      continue;
+    }
+
+
+
+    if (sscanf(a, "-score%f", &tmpf)) {
+      ezpp_set_score(ez, tmpf);
       continue;
     }
 
