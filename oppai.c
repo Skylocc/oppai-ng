@@ -105,6 +105,7 @@ OPPAIAPI int ezpp_mode(ezpp_t ez);
 OPPAIAPI int ezpp_combo(ezpp_t ez);
 OPPAIAPI int ezpp_max_combo(ezpp_t ez);
 OPPAIAPI int ezpp_mods(ezpp_t ez);
+OPPAIAPI int ezpp_score(ezpp_t ez);
 OPPAIAPI int ezpp_score_version(ezpp_t ez);
 OPPAIAPI float ezpp_time_at(ezpp_t ez, int i); /* milliseconds */
 OPPAIAPI float ezpp_strain_at(ezpp_t ez, int i, int difficulty_type);
@@ -121,6 +122,7 @@ OPPAIAPI void ezpp_set_base_cs(ezpp_t ez, float cs);
 OPPAIAPI void ezpp_set_base_hp(ezpp_t ez, float hp);
 OPPAIAPI void ezpp_set_mode_override(ezpp_t ez, int mode_override);
 OPPAIAPI void ezpp_set_mode(ezpp_t ez, int mode);
+OPPAIAPI void ezpp_set_score(ezpp_t ez, int score);
 OPPAIAPI void ezpp_set_mods(ezpp_t ez, int mods);
 OPPAIAPI void ezpp_set_combo(ezpp_t ez, int combo);
 OPPAIAPI void ezpp_set_nmiss(ezpp_t ez, int nmiss);
@@ -165,6 +167,7 @@ OPPAIAPI char* oppai_version_str(void);
 
 #define MODE_STD 0
 #define MODE_TAIKO 1
+#define MODE_MANIA 3
 
 #define DIFF_SPEED 0
 #define DIFF_AIM 1
@@ -547,6 +550,7 @@ struct ezpp {
   float accuracy_percent;
   int n300, n100, n50, nmiss;
   int end;
+  int score;
   float end_time;
   float base_ar, base_cs, base_od, base_hp;
   int max_combo;
@@ -664,6 +668,7 @@ int mods_apply(ezpp_t ez) {
   switch (ez->mode) {
   case MODE_STD:
   case MODE_TAIKO:
+  case MODE_MANIA:
     break;
   default:
     info("this gamemode is not yet supported for mods calc\n");
@@ -872,6 +877,7 @@ int p_general(ezpp_t ez, slice_t* line) {
     switch (ez->mode) {
     case MODE_STD:
     case MODE_TAIKO:
+     case MODE_MANIA:
       break;
     default:
       return ERR_NOTIMPLEMENTED;
@@ -1703,6 +1709,37 @@ float d_length_bonus(float stars, float difficulty) {
   return 0.32f + 0.5f * (log10f(difficulty + stars) - log10f(stars));
 }
 
+
+int d_mania(ezpp_t ez) {
+
+int res;
+
+  res = d_calc_individual(ez, DIFF_SPEED);
+  if (res < 0) {
+    return res;
+  }
+
+  res = d_calc_individual(ez, DIFF_AIM);
+  if (res < 0) {
+    return res;
+  }
+
+  ez->speed_length_bonus = d_length_bonus(ez->speed_stars, ez->speed_difficulty);
+  ez->speed_stars = (float)sqrt(ez->speed_stars) * STAR_SCALING_FACTOR;
+
+
+  /* calculate total star rating */
+  ez->stars = ez->speed_stars +
+    (float)fabs(ez->speed_length_bonus) * EXTREME_SCALING_FACTOR;
+
+
+    /*ez->stars *= ez->speed_length_bonus;*/
+
+    ez->stars *= 0.50f;
+    return 0;
+}
+
+
 int d_std(ezpp_t ez) {
   int res;
 
@@ -1957,6 +1994,7 @@ continue_loop:
 int d_calc(ezpp_t ez) {
   switch (ez->mode) {
     case MODE_STD: return d_std(ez);
+     case MODE_MANIA: return d_mania(ez);
     case MODE_TAIKO: return d_taiko(ez);
   }
   info("this gamemode is not yet supported\n");
@@ -2037,6 +2075,100 @@ void taiko_acc_round(float acc_percent, int nobjects, int nmisses,
 float base_pp(float stars) {
   return (float)pow(5.0f * al_max(1.0f, stars / 0.0675f) - 4.0f, 3.0f)
     / 100000.0f;
+}
+
+
+#define mymin(a, b) ((a) < (b) ? (a) : (b))
+#define mymax(a, b) ((a) > (b) ? (a) : (b))
+
+
+int pp_mania(ezpp_t ez) {
+
+  /* acc used for pp is different in scorev1 because it ignores sliders */
+
+  float scoreMultiplier = 1.0f;
+  float strainPP;
+  float scrubbedOD;
+  float accPP;
+  float hitWindow300;
+  float multiplier;
+
+  ez -> nsliders = ez -> nobjects - ez -> nsliders - ez -> ncircles;
+
+  if (ez -> max_combo <= 0) {
+    info("W: max_combo <= 0, changing to 1\n");
+    ez -> max_combo = 1;
+  }
+
+  ez -> speed_pp = base_pp(ez -> speed_stars);
+
+  if (scoreMultiplier <= 0) {
+    strainPP = 0.00f;
+  } else {
+
+    ez -> score *= 1.0 / scoreMultiplier;
+
+    strainPP = pow(5.0 * mymax(1.0, ez -> stars / 0.0825) - 4.0, 3.0) / 110000.0;
+    strainPP *= 1 + 0.1 * mymin(1.0, ez -> nobjects) / 1500.0;
+
+    if (ez -> score <= 500000) {
+      strainPP *= (ez -> score / 500000.0) * 0.2;
+    } else if (ez -> score <= 600000) {
+      strainPP *= 0.1 + (ez -> score - 500000.0) * 0.35;
+    } else if (ez -> score <= 700000) {
+      strainPP *= 0.3 + (ez -> score / 600000.0) * 0.20;
+    } else if (ez -> score <= 800000) {
+      strainPP *= 0.65 + (ez -> score / 700000.0) * 0.1;
+    } else if (ez -> score <= 900000) {
+      strainPP *= 0.85 + (ez -> score / 800000.0) * 0.05;
+    } else {
+      strainPP *= 0.95 + (ez -> score - 900000) / 100000.0 * 0.05;
+    }
+
+    scrubbedOD = mymin(10.0, mymax(0, 10.0 - ez -> od));
+
+    hitWindow300 = (34 + 3 * scrubbedOD);
+
+    if (ez->mods & MODS_EZ) {
+      hitWindow300 *= 1.4;
+    } 
+
+    if (ez -> mods & MODS_DT) {
+      hitWindow300 *= 1.4;
+    } else if (ez -> mods & MODS_NC){
+      hitWindow300 *= 1.4;
+    } else if (ez->mods & MODS_HT){
+      hitWindow300 *= 0.5;
+    }
+
+    accPP = pow((150.0 / hitWindow300) * pow(-1, 16), 1.8) * 2.5;
+    accPP *= mymin(1.15, pow(ez->nobjects / 1500.0, 0.3));
+
+    multiplier = 1.1;
+
+    if (ez->mods & MODS_NF) {
+      multiplier *= 0.90;
+    }
+		if (ez->mods & MODS_SO) {
+      	multiplier *= 0.95;
+    }
+		if (ez->mods & MODS_EZ) {
+      multiplier *= 0.50;
+    }
+		if (ez->mods & MODS_HR) { 
+      multiplier *= 1.20;
+		}
+		if (ez->mods & MODS_DT) {
+     multiplier *= 1.45;
+    }
+		if (ez->mods & MODS_NC) {
+      multiplier *= 1.45;
+    }
+
+    ez -> pp = pow(pow(strainPP, 1.1) + pow(accPP, 1.1), 1.0 / 1.1) * multiplier;
+
+  }
+  return 0;
 }
 
 int pp_std(ezpp_t ez) {
@@ -2346,6 +2478,7 @@ int calc(ezpp_t ez) {
 
   switch (ez->mode) {
     case MODE_STD: res = pp_std(ez); break;
+    case MODE_MANIA: res = pp_mania(ez); break;
     case MODE_TAIKO: res = pp_taiko(ez); break;
     default:
       info("pp calc for this mode is not yet supported\n");
@@ -2366,6 +2499,7 @@ ezpp_t ezpp_new(void) {
     ez->mode = MODE_STD;
     ez->mods = MODS_NOMOD;
     ez->combo = -1;
+    ez->score = 1000000;
     ez->score_version = 1;
     ez->accuracy_percent = -1;
     ez->base_ar = ez->base_od = ez->base_cs = ez->base_hp = -1;
@@ -2449,6 +2583,7 @@ OPPAIAPI int ezpp_mode(ezpp_t ez) { return ez->mode; }
 OPPAIAPI int ezpp_combo(ezpp_t ez) { return ez->combo; }
 OPPAIAPI int ezpp_max_combo(ezpp_t ez) { return ez->max_combo; }
 OPPAIAPI int ezpp_mods(ezpp_t ez) { return ez->mods; }
+OPPAIAPI int ezpp_score(ezpp_t ez) { return ez->score; }
 OPPAIAPI int ezpp_score_version(ezpp_t ez) { return ez->score_version; }
 OPPAIAPI float ezpp_aim_stars(ezpp_t ez) { return ez->aim_stars; }
 OPPAIAPI float ezpp_speed_stars(ezpp_t ez) { return ez->speed_stars; }
@@ -2514,6 +2649,7 @@ setter(float, base_ar)
 setter(float, base_od)
 setter(float, base_hp)
 setter(int, mode)
+setter(int, score)
 setter(int, combo)
 setter(int, score_version)
 setter(float, accuracy_percent)
@@ -2580,5 +2716,7 @@ void ezpp_set_accuracy(ezpp_t ez, int n100, int n50) {
     calc(ez);
   }
 }
+
+
 
 #endif /* OPPAI_IMPLEMENTATION */
