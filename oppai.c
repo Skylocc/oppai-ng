@@ -2114,7 +2114,7 @@ int pp_mania(ezpp_t ez) {
     if (ez -> score <= 500000) {
       strainPP *= (ez -> score / 500000.0) * 0.2;
     } else if (ez -> score <= 600000) {
-      strainPP *= 0.1 + (ez -> score - 500000.0) * 0.35;
+      strainPP *= 0.1 + (ez -> score / 500000.0) * 0.35;
     } else if (ez -> score <= 700000) {
       strainPP *= 0.3 + (ez -> score / 600000.0) * 0.20;
     } else if (ez -> score <= 800000) {
