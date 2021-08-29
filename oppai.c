@@ -167,6 +167,7 @@ OPPAIAPI char* oppai_version_str(void);
 
 #define MODE_STD 0
 #define MODE_TAIKO 1
+#define MODE_CATCH 2
 #define MODE_MANIA 3
 
 #define DIFF_SPEED 0
@@ -668,6 +669,7 @@ int mods_apply(ezpp_t ez) {
   switch (ez->mode) {
   case MODE_STD:
   case MODE_TAIKO:
+  case MODE_CATCH:
   case MODE_MANIA:
     break;
   default:
@@ -875,8 +877,9 @@ int p_general(ezpp_t ez, slice_t* line) {
       ez->mode = ez->original_mode;
     }
     switch (ez->mode) {
-    case MODE_STD:
-    case MODE_TAIKO:
+     case MODE_STD:
+     case MODE_TAIKO:
+     case MODE_CATCH:
      case MODE_MANIA:
       break;
     default:
@@ -1710,6 +1713,8 @@ float d_length_bonus(float stars, float difficulty) {
 }
 
 
+/* mania diff calc ----------------------------------------------------- */
+
 int d_mania(ezpp_t ez) {
 
 int res;
@@ -1739,6 +1744,37 @@ int res;
     return 0;
 }
 
+/* catch diff calc ----------------------------------------------------- */
+
+#define CATCH_STAR_SCALING_FACTOR 0.145f
+
+int d_catch(ezpp_t ez) {
+
+  int res;
+  
+  res = d_calc_individual(ez, DIFF_SPEED);
+  if (res < 0) {
+    return res;
+  }
+
+  res = d_calc_individual(ez, DIFF_AIM);
+  if (res < 0) {
+    return res;
+  }
+
+  ez->aim_length_bonus = d_length_bonus(ez->aim_stars, ez->aim_difficulty);
+  ez->speed_length_bonus = d_length_bonus(ez->speed_stars, ez->speed_difficulty);
+  ez->aim_stars = (float)sqrt(ez->aim_stars) * STAR_SCALING_FACTOR;
+  ez->speed_stars = (float)sqrt(ez->speed_stars) * STAR_SCALING_FACTOR;
+
+  /* calculate total star rating */
+  ez->stars = ez->aim_stars + ez->speed_stars +
+  (float)fabs(ez->speed_stars - ez->aim_stars) * CATCH_STAR_SCALING_FACTOR;
+
+  ez->stars *= 0.9679f; 
+
+  return 0;
+}
 
 int d_std(ezpp_t ez) {
   int res;
@@ -1757,10 +1793,6 @@ int d_std(ezpp_t ez) {
   ez->speed_length_bonus = d_length_bonus(ez->speed_stars, ez->speed_difficulty);
   ez->aim_stars = (float)sqrt(ez->aim_stars) * STAR_SCALING_FACTOR;
   ez->speed_stars = (float)sqrt(ez->speed_stars) * STAR_SCALING_FACTOR;
-
-  if (ez->mods & MODS_TOUCH_DEVICE) {
-    ez->aim_stars = (float)pow(ez->aim_stars, 0.8f);
-  }
 
   /* calculate total star rating */
   ez->stars = ez->aim_stars + ez->speed_stars +
@@ -1992,9 +2024,11 @@ continue_loop:
 }
 
 int d_calc(ezpp_t ez) {
+  
   switch (ez->mode) {
     case MODE_STD: return d_std(ez);
-     case MODE_MANIA: return d_mania(ez);
+    case MODE_MANIA: return d_mania(ez); 
+    case MODE_CATCH: return d_catch(ez);
     case MODE_TAIKO: return d_taiko(ez);
   }
   info("this gamemode is not yet supported\n");
@@ -2009,6 +2043,18 @@ float acc_calc(int n300, int n100, int n50, int misses) {
   if (total_hits > 0) {
     acc = (n50 * 50.0f + n100 * 100.0f + n300 * 300.0f)
       / (total_hits * 300.0f);
+  }
+  return acc;
+}
+
+float acc_calc_catch(int n300, int n100, int n50, int misses) {
+  float acc = 0;
+  float fruits = n300 + n100 + n50;
+  int total_fruits = n300 + n100 + n50;
+  if (total_fruits == 0) {
+    acc = 1;
+  } else {
+    acc = fruits / total_fruits;
   }
   return acc;
 }
@@ -2077,11 +2123,6 @@ float base_pp(float stars) {
     / 100000.0f;
 }
 
-
-#define mymin(a, b) ((a) < (b) ? (a) : (b))
-#define mymax(a, b) ((a) > (b) ? (a) : (b))
-
-
 int pp_mania(ezpp_t ez) {
 
   /* acc used for pp is different in scorev1 because it ignores sliders */
@@ -2108,8 +2149,8 @@ int pp_mania(ezpp_t ez) {
 
     ez -> score *= 1.0 / scoreMultiplier;
 
-    strainPP = pow(5.0 * mymax(1.0, ez -> stars / 0.0825) - 4.0, 3.0) / 110000.0;
-    strainPP *= 1 + 0.1 * mymin(1.0, ez -> nobjects) / 1500.0;
+    strainPP = pow(5.0 * al_max(1.0, ez -> stars / 0.0825) - 4.0, 3.0) / 110000.0;
+    strainPP *= 1 + 0.1 * al_min(1.0, ez -> nobjects) / 1500.0;
 
     if (ez -> score <= 500000) {
       strainPP *= (ez -> score / 500000.0) * 0.2;
@@ -2125,7 +2166,7 @@ int pp_mania(ezpp_t ez) {
       strainPP *= 0.95 + (ez -> score - 900000) / 100000.0 * 0.05;
     }
 
-    scrubbedOD = mymin(10.0, mymax(0, 10.0 - ez -> od));
+    scrubbedOD = al_min(10.0, al_max(0, 10.0 - ez -> od));
 
     hitWindow300 = (34 + 3 * scrubbedOD);
 
@@ -2142,7 +2183,7 @@ int pp_mania(ezpp_t ez) {
     }
 
     accPP = pow((150.0 / hitWindow300) * pow(-1, 16), 1.8) * 2.5;
-    accPP *= mymin(1.15, pow(ez->nobjects / 1500.0, 0.3));
+    accPP *= al_min(1.15, pow(ez->nobjects / 1500.0, 0.3));
 
     multiplier = 1.1;
 
@@ -2150,7 +2191,7 @@ int pp_mania(ezpp_t ez) {
       multiplier *= 0.90;
     }
 		if (ez->mods & MODS_SO) {
-      	multiplier *= 0.95;
+      multiplier *= 0.95;
     }
 		if (ez->mods & MODS_EZ) {
       multiplier *= 0.50;
@@ -2159,7 +2200,7 @@ int pp_mania(ezpp_t ez) {
       multiplier *= 1.20;
 		}
 		if (ez->mods & MODS_DT) {
-     multiplier *= 1.45;
+      multiplier *= 1.45;
     }
 		if (ez->mods & MODS_NC) {
       multiplier *= 1.45;
@@ -2170,6 +2211,55 @@ int pp_mania(ezpp_t ez) {
   }
   return 0;
 }
+
+int pp_catch(ezpp_t ez) {
+
+  float length_bonus;
+  float accuracy;
+
+  accuracy = acc_calc_catch(ez->n300, ez->n100, ez->n50, ez->nmiss);
+  ez->accuracy_percent = accuracy * 100.0f;
+
+  ez->pp = pow(((5 * ez->stars / 0.0049f) - 4), 2) / 100000;
+  
+  length_bonus = 0.95f + 0.4f * al_min(1, ez->combo / 3000);
+
+  if (ez->combo > 3000){
+    length_bonus += log10(ez->combo / 3000);
+  }
+
+  ez->pp *= length_bonus;
+  ez->pp *= pow(0.97, ez->nmiss);
+  ez->pp *= al_min(pow(ez->combo, 0.8f) / pow(ez->max_combo,0.8f),1);
+  ez->pp *= pow(accuracy, 5.5);
+
+  if (ez->ar > 9) {
+    ez->pp *= 1 + 0.1f * (ez->ar - 9);
+  }
+
+  if (ez->ar < 8) {
+    ez->pp *= 1 + 0.025f * (8 - ez->ar);
+  }
+
+  if (ez->mods & MODS_HD){
+      ez->pp *= 1.05f + 0.075f * (10 - al_min(10,ez->ar));
+  }
+
+  if (ez->mods & MODS_FL){
+      ez->pp *= 1.35f * length_bonus;
+  }
+
+  if (ez->mods & MODS_NF){
+      ez->pp *= 0.9f;
+  }
+
+  if (ez->mods & MODS_SO){
+      ez->pp *= 0.95f;
+  }
+  
+  return 0;
+}
+
 
 int pp_std(ezpp_t ez) {
   int ncircles = ez->ncircles;
@@ -2311,6 +2401,23 @@ int pp_std(ezpp_t ez) {
   if (ez->mods & MODS_NF) final_multiplier *= (float) al_max(0.9f, 1.0f - 0.2f * ez->nmiss);
   if (ez->mods & MODS_SO) final_multiplier *= 1.0 - pow((double)ez->nspinners / ez->nobjects, 0.85);
 
+  /* converted maps -------------------------------------------------------- */
+
+  switch (ez->mode_override){
+    case MODE_MANIA:
+      ez->aim_pp *= 0.10f;
+      ez->acc_pp *= 0.10f;
+      final_multiplier *= 0.50f;
+      break;
+    case MODE_CATCH:
+      ez->aim_pp *= 0.10f;
+      ez->acc_pp *= 0.10f;
+      final_multiplier *= 0.50f;
+      break;
+    default:
+      break;
+  }
+
   ez->pp = (float)(
     pow(
       pow(ez->aim_pp, 1.1f) +
@@ -2319,6 +2426,7 @@ int pp_std(ezpp_t ez) {
       1.0f / 1.1f
     ) * final_multiplier
   );
+
 
   ez->accuracy_percent = accuracy * 100.0f;
 
@@ -2478,8 +2586,9 @@ int calc(ezpp_t ez) {
 
   switch (ez->mode) {
     case MODE_STD: res = pp_std(ez); break;
-    case MODE_MANIA: res = pp_mania(ez); break;
     case MODE_TAIKO: res = pp_taiko(ez); break;
+    case MODE_CATCH: res = pp_catch(ez); break;
+    case MODE_MANIA: res = pp_mania(ez); break;
     default:
       info("pp calc for this mode is not yet supported\n");
       return ERR_NOTIMPLEMENTED;
