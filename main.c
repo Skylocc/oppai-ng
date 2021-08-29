@@ -917,11 +917,15 @@ int main(int argc, char* argv[]) {
       continue;
     }
 
-     if (!strcmp(a, "-mania")) {
+    if (!strcmp(a, "-mania")) {
       ezpp_set_mode_override(ez, MODE_MANIA);
       continue;
     }
 
+    if (!strcmp(a, "-catch")) {
+      ezpp_set_mode_override(ez, MODE_CATCH);
+      continue;
+    }
 
 
     if (sscanf(a, "-score%f", &tmpf)) {
